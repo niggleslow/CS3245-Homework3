@@ -20,12 +20,11 @@ For this assignment, the general outline of the code is as follows:
 	normalization of the document vector later)
 5.	Using the completed "temp_postings_dictionary" from step 3, extract the needed information and generate:
 	5.1	-	Postings file >> Number of Documents (1st line), List of doc lengths, List of [DocID, Term Frequency]
-	5.2	-	Dictionary file >> Consists of lines where each individual line follows the format : 
-					< stemmed_token, document_frequency, startPostion (of postings list for term), lastPosition (of postings list for term) >
+	5.2	-	Dictionary file >> Consists of lines where:
+					First line - < startPosition (of doc_length_list)  , endPosition (of doc_length_list) >
+					Subsequent lines - < stemmed_token, document_frequency, startPosition (of postings list for term), lastPosition (of postings list for term) >
 6. Close both files
 7. End of Indexing
-
-
 
 
 >> For the searching portion, search.py:
@@ -33,12 +32,14 @@ For this assignment, the general outline of the code is as follows:
 1. Extract queries from the query file
 2. For each query in file:
     2.1. Tokenize the raw query into list of query tokens
-    2.2. Using the query tokens, create the Reversed Polish Notation version of the BOOLEAN expression
-3. Evaluate each RPN-ed BOOLEAN expression sequentially with the aid of a temporary stack.
-4. Sort each result in ascending order
-5. Write to output file
-6. Close all remaining open files - output_file, postings_file
-7. End of Searching
+   	2.2. Calculate the query vector (using ltc)
+3. Calculate the document vectors (using lnc scheme)
+4. Using document vectors and query vector from steps 2 and 3, calculate the score similarity of each document with respect to the query
+5. Rank the scores and obtain the top 10 results
+6. Write the docIDs into the output_file
+7. Repeat steps 2 - 6 for the rest of the queries
+7. Close all remaining open files - output_file, postings_file
+8. End of Searching
 
 * NOTE * Description of helper classes can be found at the top of each respective class :)
 
