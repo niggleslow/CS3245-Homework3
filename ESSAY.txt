@@ -1,0 +1,43 @@
+1. In this assignment, we didn't ask you to support phrasal queries, which is a feature that is typically supported in web search engines. Describe how you would support phrasal search in conjunction with the VSM model. A sketch of the algorithm is sufficient.
+
+A: 
+Making use of what we have learnt so far, I would most probably make use of either:
+a. Positional Indexing OR
+b. Biword Indexes
+
+With Postional Indexing, we could store static positions of the terms within the postings list during indexing. Afterwhich, during the searching process, we can implement a check function that will allow scoring to be only increased for any particular document if and only if the positions of the terms are in accordance to the queried phrase. 
+
+For example:
+
+Given the following phrasal query: "happy cat"
+
+Suppose we have two documents,
+
+Doc A:
+A lazy cat is a happy cat.
+
+Doc B:
+A happy boy pets a cat.
+
+With positional indexing, we would know that the positions of the terms "happy" and "cat" in Doc A correspond to the phrasal query whereas Doc B's aren't. Hence we would rank Doc A with a higher score under this scheme.
+
+However, a downside would be that more space will be required in order to implement either the positional indexing or biword indexing schemes.
+
+
+
+2. Describe how your search engine reacts to long documents and long queries as compared to short documents and queries. Is the normalization you use sufficient to address the problems (see Section 6.4.4 for a hint)? In your judgement, is the lnc.ltc scheme (n.b., not the ranking scheme you were asked to implement) sufficient for retrieving documents from the Reuters-21578 collection?
+
+A.
+In the current implementation of my search engine, I would say that the length factor of long documents and queries has a largly "muted" role during the ranking of documents when compared to short documents and queries. Meaning to say that the differences in precision and recall for the two mentioned categories would not be very different. 
+
+The reason for the above is precisely because of the length normalization that is done for both the query and the documents when coming up with the query and document vectors. Hence, after the normalization stage, the weights of longer document/query tokens are comparable to those of the shorter variant.
+
+I would think that it is sufficient for the Reuters colloection (where there are varying lengths of documents i.e. 1KB compared to 5KB), due to the fact that there is length normalization of both queries and documents in the current scheme implemented, lnc.ltc, for this assignment. 
+
+
+
+
+3. Do you think zone or field parametric indices would be useful for practical search in the Reuters collection?
+
+A. 
+Yes! I think it would be useful since most (seems like all) files in the Reuters collection start off with a title header. Hence, with the metadata contained within the title, I would think that the relevance of a document can be distinguished within the context of the given query.

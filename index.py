@@ -1,73 +1,120 @@
-#	Matric Number: A0110574N
+#   Matric Number: A0110574N
 #
-#	--- INFORMATION GIVEN ABOUT index.py ---
+#	-- INFORMATION GIVEN ABOUT index.py ---
+#
+#	In addition to the standard dictionary and postings file, you will need to store information at indexing time about
+#	the document length, in order to do document normalization. In the lecture notes and textbook this is referred to
+#	as Length[N] . You may store this information with the postings, dictionary or as a separate file.
 #
 #	Indexing script, index.py, should be called in this format:
 #	>>>	$ python index.py -i directory-of-documents -d dictionary-file -p postings-file
-#
-#	At the end of the indexing phase, you are to write the dictionary into dictionary-file and the postings into postings-file.
-#	NOTE: Use 'dictionary.txt' & 'postings.txt'
-#
-#	In order to collect the vocabulary, you need to apply tokenization and stemming on the document text. 
-#
-#	You should use the NLTK tokenizers:
-#	nltk.sent_tokenize() to tokenize sentences
-#	nltk.word_tokenize() ) to tokenize words
 #	
-#	Also, the NLTK Porter stemmer: (class nlkt.stem.porter) to do stemming.
-#
-#	You need to do case-folding to reduce all words to lower case.
+#	For personal testing:
+#	python D:/GitRepos/CS3245-Homework3/index.py -i D:\python27\nltk_data\corpora\reuters\training -d D:\GitRepos\CS3245-Homework3\dictionary.txt -p D:\GitRepos\CS3245-Homework3\postings.txt
+
 
 import nltk
+import math
 import os
-import json
 import re
 import sys
 import getopt
 import cPickle as pickle
-from skiplist import SkipList
 
-"""
-index function : Overall indexing function that calls upon the helper functions
-
-Flow of events:
-
-1. Sorts the unsorted documents in the directory (in ascending order)
-2. For each file in directory:
-	2.1. process each individual file using process function
-	2.2. using the tokens from step 2.1, generate and add to the existing array_posting_dictionary
-3. For each individual key in the array_posting_dictionary from step 2 (i.e. the stemmed term):
-	3.1. Extract postings information and generate skip list, writing to posting's file
-	3.2. Generate dictionary content to be written (i.e. [term, docFrequency, startPosition, endPosition] of the skip list)
-4. Write to dictionary file
-5. End of Indexing
-"""
+#	Main indexing function of this program
+#	Largely similar to HW2's indexer! :)
+#	2 main differences:
+#		1. Postings list contains [DocID, TermFreq] instead of [DocID, SkipList]
+#		2. A dictionary mapped DocID to Document Length is written to the postings file for normalization in search.py
 
 def index(dDocs, dFile, pFile):
 	dictionary = set()
 	postings = []
-	unsorted_training_files = os.listdir(dDocs)
-	print "Sorting files..."
-	unsorted_training_files = [int(a) for a in unsorted_training_files]
-	sorted_training_files = sorted(unsorted_training_files)
-	#sorted_training_files = sorted([f for f in unsorted_training_files], key=int)
-	print "Sort complete!"
-	print "Processing files..."
-	array_posting_dictionary = create_array_postings_dictionary(sorted_training_files, dDocs)
-	print "Processing complete!"
-	print "Generating dicitionary.txt and posting.txt"
-	create_dic_and_posting_file(sorted_training_files, array_posting_dictionary, dFile, pFile)
-	print "Indexing complete!"
+	sorted_files = sort_files(dDocs)
+	number_of_docs = len(sorted_files)
+	print "Total files in corpora: ", number_of_docs
+	temp_postings_dictionary, temp_list_doc_length = create_temp_postings_dictionary(sorted_files, dDocs)
+	create_dictionary_and_posting_files(temp_list_doc_length, number_of_docs, temp_postings_dictionary, dFile, pFile)
+	print "Done indexing!"
 
 
-"""
-process function :
-	For each line in the current file f,
-	Carries out -	sent_tokenize (NLTK library)
-					word_tokenize (NLTK library)
-					stemming (using PorterStemmer)
-					case folding (using lower())
-"""
+def create_dictionary_and_posting_files(doc_length_list, noDocs, temp_postings_dictionary, dFile, pFile):
+	sorted_keys_postings_dictionary = sorted(temp_postings_dictionary.iterkeys())
+
+	# open pfile & dfile for writing
+	pfile = open(pFile, 'wb')
+	dfile = open(dFile, 'wb')
+
+	write_into_dictionary = ""
+
+	pfile.write(str(noDocs) + "\n")
+
+	list_doc_length_pos = pickle_write(doc_length_list, pfile)
+	list_doc_length_start = list_doc_length_pos[0]
+	list_doc_length_end = list_doc_length_pos[1]
+
+	write_into_dictionary += "%(startpos)s %(lastpos)s\n"\
+								%{"startpos":str(list_doc_length_start), "lastpos":str(list_doc_length_end)}
+
+	# write into postings file and generate content for dictionary concurrently
+	for key in sorted_keys_postings_dictionary:
+		posting_list_pos = pickle_write(temp_postings_dictionary[key], pfile)
+		posting_list_start = posting_list_pos[0]
+		posting_list_end = posting_list_pos[1]
+		doc_frequency = len(temp_postings_dictionary[key])
+		write_into_dictionary += "%(term)s %(frequency)s %(startpos)s %(lastpos)s\n"\
+								%{"term":str(key), "frequency": str(doc_frequency), "startpos": str(posting_list_start), "lastpos": str(posting_list_end)} 
+
+	# write into dictionary file
+	dfile.write(str(write_into_dictionary))
+
+	# close file writers upon completion of indexing
+	pfile.close()
+	dfile.close()
+
+
+def pickle_write(posting_list, pfile):
+	cpickled_posting_list = pickle.dumps(posting_list)
+	start_pos = pfile.tell()
+	pfile.write(cpickled_posting_list + "\n")
+	end_pos = pfile.tell()
+	return (start_pos, end_pos)
+
+
+def create_temp_postings_dictionary(sorted_files, dDocs):
+	temp_postings_dictionary = {}
+	temp_list_containing_files = {}
+	temp_list_containing_doc_length = {}
+	for f in sorted_files:
+		temp_list_tf = {}
+		doc_length = 0
+		stemmed_list = process(f, dDocs)
+		for stemmed_token in stemmed_list:
+			if stemmed_token not in temp_list_tf:
+				temp_list_tf[stemmed_token] = 1
+			else:
+				temp_list_tf[stemmed_token] += 1
+
+			if stemmed_token not in temp_postings_dictionary:
+				temp_postings_dictionary[stemmed_token] = [[f, 1]]
+			else:
+				if temp_postings_dictionary[stemmed_token][-1][0] == f:
+					temp_postings_dictionary[stemmed_token][-1][1] += 1
+				else:
+					temp_postings_dictionary[stemmed_token].append([f, 1])
+		for token in temp_list_tf:
+			doc_length += math.pow(((math.log(temp_list_tf[token],10)) + 1),2)
+		doc_length = math.sqrt(doc_length)
+		temp_list_containing_doc_length[f] = doc_length
+	return temp_postings_dictionary, temp_list_containing_doc_length
+
+def calculate_doc_length(temp_postings_dictionary, number_of_docs):
+	print "Calculating doc length"
+	for docID in range(0, number_of_docs):
+		doc_length = 0
+
+
+
 def process(file_name, dDocs):
 	pstemmer = nltk.stem.porter.PorterStemmer()
 	stemmed_word_list = []
@@ -82,72 +129,12 @@ def process(file_name, dDocs):
 	return stemmed_word_list
 
 
-# Creates a data structure to hold all information required to generate postings and dictionary file later (format - stemmed _token: list(docID)s)
-def create_array_postings_dictionary(sorted_list_of_filenames, dDocs):
-	array_postings_dictionary = {}
-	for f in sorted_list_of_filenames:
-		stemmed_list = process(f, dDocs)
-		for stemmed_token in stemmed_list:
-			"""
-			Used for ESSAY Question 1 - Removing Numbers from dictionary and postings file. 
-			Side note: Should have made this more modular :(
-			if re.match('^[0-9\-\.,]+$', stemmed_token):
-				pass
-			else:
-				if stemmed_token not in array_postings_dictionary: #stemmed_token does not exist in array yet
-					array_postings_dictionary[stemmed_token] = [f]
-				else:
-					if not f in array_postings_dictionary[stemmed_token]: #only add docID if it doesn't already exist
-						array_postings_dictionary[stemmed_token].append(f)
-			"""
-			if stemmed_token not in array_postings_dictionary: #stemmed_token does not exist in array yet
-					array_postings_dictionary[stemmed_token] = [f]
-			else:
-				if not f in array_postings_dictionary[stemmed_token]: #only add docID if it doesn't already exist
-					array_postings_dictionary[stemmed_token].append(f)
-	return array_postings_dictionary
-
-
-# Generate dictionary and postings file
-def create_dic_and_posting_file(sorted_list_of_filenames, array_postings_dictionary, dictionary_file, postings_file):
-	sorted_keys_array_postings_dictionary = sorted(array_postings_dictionary.iterkeys())
-	
-	#open pfile and dfile for writing
-	pfile = open(postings_file, 'wb')
-	dfile = open(dictionary_file, 'wb')
-
-	# initialise content of pfile
-	# include a json formatted list of all docID for search() later i.e. NEGATION, etc.
-	postings_file_header = json.dumps(sorted_list_of_filenames) + '\n' 
-	pfile.write(postings_file_header)
-
-	write_into_dictionary = ""
-	
-	# Write into postings file and generate content for dictionary concurrently
-	for key in sorted_keys_array_postings_dictionary:
-		skip_list_pos = pickle_write(array_postings_dictionary[key], pfile)
-		skip_list_start = skip_list_pos[0]
-		skip_list_end = skip_list_pos[1]
-		doc_frequency = len(array_postings_dictionary[key])
-		write_into_dictionary += "%(term)s %(frequency)s %(startpos)s %(lastpos)s\n"\
-						%{"term":str(key), "frequency":str(doc_frequency), "startpos":str(skip_list_start), "lastpos":str(skip_list_end)}
-
-	# Write into dictionary file
-	dfile.write(str(write_into_dictionary))
-
-	# Close file writers upon completion of indexing
-	pfile.close()
-	dfile.close()
-		
-
-# Using the cPickle library, write the skip list into the postings file
-def pickle_write(posting_list, pfile):
-	skip_list = SkipList(posting_list).generate_skips() # construct and generate skip list for each stemmed token
-	cpickled_skip_list = pickle.dumps(skip_list)
-	start_pos = pfile.tell() 
-	pfile.write(cpickled_skip_list + "\n")
-	end_pos = pfile.tell()
-	return (start_pos, end_pos)
+def sort_files(dDocs):
+	temp_list = os.listdir(dDocs)
+	temp_list = [int(a) for a in temp_list]
+	sorted_list = sorted(temp_list)
+	print "Sorted files!"
+	return sorted_list
 
 
 def usage():

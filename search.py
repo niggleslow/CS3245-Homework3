@@ -2,263 +2,276 @@
 #
 #   --- INFORMATION GIVEN ABOUT search.py ---
 #
+#   In the searching step, you will need to rank documents by cosine similarity based on tf*idf. In terms of SMART
+#   notation of ddd.qqq, you will need to implement the lnc.ltc ranking scheme.
+#
+#   Compute cosine similarity between the query and each document, with the weights follow the tf*idf calculation, where term freq = 1 + log(tf) 
+#   and inverse document frequency idf = log(N/df) (for queries). 
+#   >>> That is, tf-idf = (1 + log(tf)) * log(N/df).
+#
+#   Your searcher should output a list of up to 10 most relevant (less if there are fewer than ten documents that have matching stems to the query)
+#   docIDs in response to the query. 
+#   
+#   These documents need to be ordered by relevance, with the first document being most relevant. For those with marked with the same relevance, further
+#   sort them by the increasing order of the docIDs.
+#   
 #   Searching script, search.py, should be called in this format:
 #   >>> $ python search.py -d dictionary-file -p postings-file -q file-of-queries -o output-file-of-results
-#
-#   dictionary-file and postings-file are the output files from the indexing phase. 
-#   Queries to be tested are stored in file-of-queries, in which one query occupies one line. 
-#   Your answer to a query should contain a list of document IDs that match the query in increasing order.
 #   
-#   NOTE: Your program should not read the whole postings-file into memory
-#   
-#   The operators in the search queries include: AND , OR , NOT , ( , and ) . 
-#   The operators will always be in UPPER CASE.
-#
-#   Note that parentheses have higher precedence than NOT, which has a higher precedence than AND, which has a higher precedence than
-#   OR. 
-#   
-#   AND and OR are binary operators, while NOT is a unary operator.  
+#   For personal testing: 
+#   python D:/GitRepos/CS3245-Homework3/search.py -d D:\GitRepos\CS3245-Homework3\dictionary.txt -p D:\GitRepos\CS3245-Homework3\postings.txt -q D:\GitRepos\CS3245-Homework3\queries.txt -o D:\GitRepos\CS3245-Homework3\output.txt
 
+import math
 import nltk
 import sys
 import os
 import re
-import json
 import getopt
 import cPickle as pickle
-from skiplist import SkipList
-from skiplist import AdapterList
 
-"""
-search function : Overall searching function that calls upon the helper functions
-
-Flow of events:
-
-1. Extract queries from the query file
-2. For each query in file:
-    2.1. tokenize the raw query into list of query tokens
-    2.2. using the query tokens, create the reversed polish notation version of the BOOLEAN expression
-3. Evaluate each rpn-ed BOOLEAN expression sequentially with the aid of a temporary stack.
-4. Sort each result in ascending order
-5. Write to output file
-6. Close all remaining open files - output_file, postings_file
-"""
+# Main function in search.py
+# Event flow as follows:
+# 1. Extract dictionary from dictionary file
+# 2. Extract and process queries from query file
+#       a. Tokenize query line
+#       b. Stem each token
+# 3. Evaluation of each individual processed query
+#       a. Create normalized query vector
+#       b. Calculate scores of each document with respect to the query (using algorithm as describe in w7 lecture notes)
+# 4. Sort list using a customised sorter
+# 5. Write the top 10 docIDs (if >= 10) to the output file
 
 def search(dFile, pFile, qFile, oFile):
-    dictionary = extract_dictionary(dFile)
-    postings_file = open(pFile, 'r')
-    output_file = open(oFile, 'w')
-
-    # since all docIDs are stored in JSON format in the first line of postings file during indexing
-    all_docID = json.loads(postings_file.readline()) 
-
-    queries = extract_queries(qFile)
-    evaluate_queries(queries, output_file, dictionary, postings_file, all_docID)
-
-    #close output & postings files
-    output_file.close()
-    postings_file.close()
-
-
-def evaluate_queries(queries, output_file, dictionary, postings_file, all_docID):
-    for q in queries:
-        rpn_query = convert_to_RPN(q)
-        #print rpn_query
-        results = evaluate_single_RPN(rpn_query, dictionary, postings_file, all_docID)
-        #print results
-        results = sorted(results)
-        output_file.write(' '.join(map(str, results)) + '\n')
-
-
-def evaluate_single_RPN(query, dictionary, postings_file, all_docID):
-    req_operands = {
-        'OR':2,
-        'AND':2,
-        'NOT':1
-    }
-    temp_stack = []
-    for token in query:
-        if token in req_operands:
-            operands_stack = []
-            for count in range(req_operands[token]): # getting the operands that the operator is associated with
-                operands_stack.append(temp_stack.pop())
-            temp_stack.append(evaluate_operation(operands_stack, token, dictionary, postings_file, all_docID))
-        else:
-            temp_stack.append(token)
-
-    if len(temp_stack) == 1:
-        #print temp_stack[0]
-        return get_postings(temp_stack[0], dictionary, postings_file).to_list()
-    elif len(stack) == 0:
-        return []
-    else:
-        print "It's a disastah!"
-
-
-# selects which operation function to call upon
-def evaluate_operation(operands, operator, dictionary, postings_file, all_docID):
-    if operator == "OR":
-        return union(operands, dictionary, postings_file)
-    elif operator == "AND":
-        return intersection(operands, dictionary, postings_file)
-    else:
-        return negation(operands[0], dictionary, postings_file, all_docID)
-
-
-# union corresponds to OR
-# NOTE: Logic here is simple, as long as docID is present in either posting list, append to results list
-def union(operands, dictionary, postings_file):
-    first_postings = get_postings(operands[0], dictionary, postings_file).to_list()
-    second_postings = get_postings(operands[1], dictionary, postings_file).to_list()
-    counter_a = 0
-    counter_b = 0
-    current_results = []
-    while counter_a < len(first_postings) and counter_b < len(second_postings):
-        if first_postings[counter_a] == second_postings[counter_b]:
-            current_results.append(first_postings[counter_a])
-            counter_a += 1
-            counter_b += 1
-        elif first_postings[counter_a] < second_postings[counter_b]:
-            current_results.append(first_postings[counter_a])
-            counter_a += 1
-        else:
-            current_results.append(second_postings[counter_b])
-            counter_b += 1
-    # from lecture: to save processing time, once either list is at its end, just append the rest of the other list
-    current_results.extend(first_postings[counter_a:])
-    current_results.extend(second_postings[counter_b:])
-    del first_postings
-    del second_postings
-    return AdapterList(current_results)
-
-
-# intersection corresponds to AND
-# NOTE: The algorithm here is implemented based on the one used in the lecture with regards to merging postings lists :D
-def intersection(operands, dictionary, postings_file):
-    first_postings = get_postings(operands[0], dictionary, postings_file)
-    second_postings = get_postings(operands[1], dictionary, postings_file)
-    current_results = []
     
-    if len(first_postings) == 0 or len(second_postings) == 0: # Intersection of one or more empty postings list = no postings
-        return AdapterList([])
+    pfile = open(pFile, 'r')
+
+    numDocs = int(pfile.readline())
+
+    # extract doc lengths & dictionary
+    doc_lengths, dictionary = extract_dictionary_and_doc_lengths(dFile, pfile)
+    
+    ofile = open(oFile, 'w')
+
+    # extract number of documents
+    
+    print "Number of documents in corpora: ", numDocs
+
+    # create list of lists of processed query tokens
+    queries = extract_queries(qFile)
+
+    #calculate queries!
+    evaluate_queries(doc_lengths, dictionary, queries, numDocs, pfile, ofile)
+
+    ofile.close()
+    pfile.close()
+
+
+def evaluate_queries(doc_lengths, dic, queries, numDocs, pfile, ofile):
+
+    # loop for each query
+    for query in queries:
+
+        # construct normalized query & doc vectors
+        norm_query_vector = create_norm_query_vector(query, numDocs, dic)
+        norm_doc_vector = create_norm_doc_vector(doc_lengths, query, dic, pfile, numDocs)
+
+        if norm_query_vector == []:
+            return []
+
+        # using algorithm given in Lecture 7 Slides
+        scores = {}
+
+        for token, wt_value in norm_query_vector.iteritems():
+            # get posting list of token
+
+            if wt_value == 0:
+                continue
+
+            for key in norm_doc_vector:
+                if key not in scores:
+                    scores[key] = norm_doc_vector[key][token] * wt_value
+                else:
+                    scores[key] += norm_doc_vector[key][token] * wt_value
+
+        # create ranking list now!
+        ranking_list = []
+        for document, score in scores.iteritems():
+            ranking_list.append([int(document), score])
+        # sort the ranking list using predefined sorter (w custom comparator)
+        ranking_list = sort_ranking_list(ranking_list)
+
+        print ranking_list[:10]
+
+        # return top 10
+        top_ten_list = []
+        if len(ranking_list) >= 10:
+            for x in range(0,10):
+                if ranking_list[x][1] > 0:
+                    top_ten_list.append(ranking_list[x][0])
+        else:
+            for x in range(0, len(ranking_list)):
+                top_ten_list.append(ranking_list[x][0])
+
+        # write top 10 docIDs in required format into output file
+        ofile.write(' '.join(map(str, top_ten_list)) + '\n')
+
+
+# customized sorter
+def sort_ranking_list(ranking_list):
+
+    def comparator(x,y):
+        if x[1] < y[1]:
+            return 1
+        elif x[1] > y[1]:
+            return -1
+        elif x[0] < y[0]:
+            return -1
+        else:
+            return 1
+
+    ranking_list.sort(comparator)
+    return ranking_list
+
+
+# returns posting list of specified token
+def get_posting_list(token, dictionary, pfile):
+    if token in dictionary:
+        pfile.seek(dictionary[token]['startPos'])
+        offset_to_read = dictionary[token]['lastPos'] - dictionary[token]['startPos']
+        posting_list = pickle.loads(pfile.read(offset_to_read))
     else:
-        continue_flag = True
+        posting_list = [] # empty list if term not in dictionary
+    return posting_list
 
-    while continue_flag:
-        first_value = first_postings.current_docID()
-        second_value = second_postings.current_docID()
 
-        if first_value == second_value:
-            current_results.append(first_value)
-            continue_flag = continue_flag and first_postings.next()
-            continue_flag = continue_flag and second_postings.next()
-        elif first_value < second_value:
-            if first_postings.has_skip() and first_postings.skip_docID() <= second_value:
-                first_postings.skip()
-            else:
-                continue_flag = continue_flag and first_postings.next()
+# create a normalized document vector
+def create_norm_doc_vector(doc_lengths, query_tokens, dic, pfile, numDocs):
+    norm_doc = {}
+    print doc_lengths[10002]
+    print doc_lengths[12397]
+    for key in doc_lengths:
+        norm_doc[key] = {}
+        for token in query_tokens:
+            posting_list = get_posting_list(token, dic, pfile)
+            norm_doc[key][token] = 0
+            for item in posting_list:
+                if item[0] == key:
+                    doc_length = doc_lengths[key]
+                    norm_doc[key][token] = (1 + math.log(item[1],10))/doc_length
+    return norm_doc
+
+
+# Method creates a normalised query vector
+def create_norm_query_vector(query_tokens, numDocs, dic):
+    norm_query = {}
+
+    # Step 0: Initiatialize denominator to 0
+    denominator = 0
+
+    # Step 1: Term frequencies
+    for token in query_tokens:
+        if token not in norm_query:
+            norm_query[token] = 1
         else:
-            if second_postings.has_skip() and second_postings.skip_docID() <= first_value:
-                second_postings.skip()
-            else:
-                continue_flag = continue_flag and second_postings.next()
+            norm_query[token] += 1
 
-    del first_postings
-    del second_postings
-    return AdapterList(current_results)
+    # Step 2: Weighted tf-idf (pre-normalization)
+    for key, value in norm_query.iteritems():
+        t_df = get_df(key, dic)
+        t_idf = df_to_idf(numDocs, t_df) 
+        log_tf = logtf_value_of(value)
+        wt = log_tf * t_idf
+        norm_query[key] = wt
+        denominator += math.pow(wt,2)
+    
+    # Step 3: Normalization!
+
+    if denominator == 0:
+        return []
+
+    denominator = math.sqrt(denominator)
+    for key, value in norm_query.iteritems():
+        norm_query[key] = value/denominator
+
+    return norm_query
 
 
-# negation corresponds to NOT
-def negation(operand, dictionary, postings_file, all_docID):
-    postings = get_postings(operand, dictionary, postings_file).to_list()
-    #print postings
-    result = AdapterList([i for i in all_docID if i not in postings])
-    del postings
-    return result
-
-
-# obtain postings list for the token
-def get_postings(token, dictionary, postings_file):
-    if type(token) is str or type(token) is unicode:
-        if str(token) in dictionary:
-            postings_file.seek(dictionary[token]['startPos']) # pointer is at the start of relevant term
-            offset_to_read = dictionary[token]['lastPos'] - dictionary[token]['startPos']
-            #print offset_to_read
-            return AdapterList(pickle.loads(postings_file.read(offset_to_read)))
-        else:
-            return AdapterList([])
+# get df from dictionary
+def get_df(term, dic):
+    if term in dic:
+        return dic[term]['docFreq']
     else:
-        return token
+        return 0
 
 
-# extracts queries from query file and store into list for easy access
-def extract_queries(qFile):
-    query_file = open(qFile, 'r')
-    queries = []
-    for line in query_file:
-        queries.append(parse_query(line)) # queries = list of list of query tokens
-    query_file.close()
-    return queries
+# logtf = log(tf)base10 + 1
+def logtf_value_of(tf):
+    if tf != 0:
+        return math.log(tf, 10) + 1
+    else:
+        return 0
 
 
-# converts the query into more "friendly" format for evaluation
-def parse_query(raw_query):
-    friendly_query = raw_query.strip()
-    # Since whitespaces are used to tokenize, add spaces before and after parenthesis to obtain them as tokens
-    # i.e. Bill AND (Bob AND Bean) -> Bill AND ( Bob AND Bean ) 
-    friendly_query = re.sub("(\(|\))", r" \1 ", friendly_query)
-    query_tokens = friendly_query.split()
-    return query_tokens
-
-
-# converts infix BOOLEAN expression to a reverse polish notation using shunting-yard algo for easier evaluation
-def convert_to_RPN(qTokens): 
-    operators = {
-        'OR':1,
-        'AND':5,
-        'NOT':10
-    }
-    rpn = []
-    temp_stack = []
-    for token in qTokens:
-        if token == '(':
-            temp_stack.append(token)
-        elif token == ')':
-            # keep popping stack to rpn till ( is found
-            while temp_stack[-1] != '(':
-                rpn.append(temp_stack.pop())
-            temp_stack.pop() # to remove the (
-        elif token in operators:
-            while (len(temp_stack) > 0 and temp_stack[-1] in operators 
-                and (token != 'NOT' and operators[token] == operators[temp_stack[-1]] or operators[token] < operators[temp_stack[-1]])):
-                rpn.append(temp_stack.pop())
-            temp_stack.append(token)
-        else:
-            pstemmer = nltk.stem.porter.PorterStemmer()
-            rpn.append(pstemmer.stem(token.lower()))
-    while len(temp_stack) > 0:
-        if temp_stack[-1] == '(' or temp_stack[-1] == ')':
-            print "Mismatch parenthesis"
-        rpn.append(temp_stack.pop())
-    return rpn
+# idf = log(N/df)base10 NOTE: df must not be 0
+def df_to_idf(numDocs, df):
+    if df != 0:
+        return math.log(numDocs/df, 10)
+    else:
+        return 0 
 
 
 # retrieve dictionary data from dictionary file
-def extract_dictionary(dFile):
+def extract_dictionary_and_doc_lengths(dFile, pfile):
+    doc_lengths = {}
     dictionary = {}
     dictionary_file = open(dFile, 'r')
+    
+    # extract doc lengths
+    first_line = dictionary_file.readline() 
+    values = first_line.split() 
+    startPos = int(values[0])
+    endPos = int(values[1])
+    pfile.seek(startPos)
+    offset_to_read = endPos - startPos
+    print offset_to_read
+    doc_lengths = pickle.loads(pfile.read(offset_to_read))
+    print doc_lengths[14818]
+
+    #extract dictionary
     for line in dictionary_file:
-       values = line.split() 
-       dictionary[values[0]] = {
-          'docFreq':int(values[1]),
-          'startPos':int(values[2]),
-          'lastPos':int(values[3])
-       }
+        values = line.split()
+        dictionary[values[0]] = {
+            'docFreq':int(values[1]),
+            'startPos':int(values[2]),
+            'lastPos':int(values[3])
+        }
     dictionary_file.close()
-    return dictionary
+    return doc_lengths, dictionary
+
+
+def extract_queries(qFile):
+    qfile = open(qFile, 'r')
+    queries = []
+    for line in qfile:
+        current_query = line
+        current_processed_tokens = process_query_line(current_query)
+        queries.append(current_processed_tokens)
+    return queries
+
+
+def process_query_line(query_line):
+    pstemmer = nltk.stem.porter.PorterStemmer()
+    tokens_list = query_line.split()
+    stemmed_tokens_list = []
+    for token in tokens_list:
+        stemmed_token = pstemmer.stem(token.lower())
+        stemmed_tokens_list.append(stemmed_token)
+    return stemmed_tokens_list
+
 
 def usage():
     print "usage: " + sys.argv[0] + " -d dictionary-file -p postings-file -q file-of-queries -o output-file-of-results"
+
 
 def main():
     try:
@@ -273,7 +286,7 @@ def main():
         if o == '-d':
             dictionary_file_d = a
         elif o == '-p':
-        	postings_file_p = a
+            postings_file_p = a
         elif o == '-q':
             queries_file_q = a
         elif o == '-o':
